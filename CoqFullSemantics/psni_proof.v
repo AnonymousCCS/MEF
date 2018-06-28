@@ -2,7 +2,7 @@
 
 Require Import ZArith.
 
-Variable Var : Set.
+Definition Var : Set := nat.  (* De Bruijn index *)
 
 Variable Principal : Set.
 Variable dec_eq_Principal : forall (l1 l2:Principal), {l1=l2}+{l1<>l2}.
@@ -23,7 +23,6 @@ Variable PC_extensionality : forall (pc1 pc2:PC), (forall k, pc1 k = pc2 k) -> p
 Variable unset : PC -> Principal -> PC.
 Variable unset_Axiom1 : forall pc k k', k=k' -> unset pc k k' = None.
 Variable unset_Axiom2 : forall pc k k', k<>k' -> unset pc k k' = pc k'.
-Variable unset_Axiom3 : forall (pc:PC) k, pc k = None -> pc = unset pc k.
 Variable emptypc : PC.
 Variable emptypc_Axiom : forall k, emptypc k = None.
 Variable all_PCs_are_finite : forall pc, exists ks, emptypc = Lists.List.fold_right (fun k pc => unset pc k) pc ks.
@@ -44,7 +43,7 @@ Variable O_upd : Outputs -> OutputHandle -> list Z -> Outputs.
 
 Inductive Term :=
   | TFV : FacetedValue -> Term
-  | TLam : Var -> Term -> Term
+  | TLam : Term -> Term
   | TNum : Z -> Term
   | TUnit : Term
   | TReturn : Term -> Term
@@ -66,8 +65,8 @@ with FacetedValue :=
 Inductive IsValue : Term -> Prop :=
   | VFV : forall fv,
       IsValue (TFV fv)
-  | VLam : forall x t,
-      IsValue (TLam x t)
+  | VLam : forall t,
+      IsValue (TLam t)
   | VNum : forall z,
       IsValue (TNum z)
   | VUnit :
@@ -78,7 +77,7 @@ Inductive IsValue : Term -> Prop :=
   .
 Definition NotNum t := forall z, t = TNum z -> False.
 
-Variable subs : Term -> Var -> Term -> Term.
+Variable subs : Term -> Term -> Term.
 Variable ffacet : PC -> FacetedValue -> FacetedValue -> FacetedValue.
 
 Inductive Context :=
@@ -119,15 +118,12 @@ Fixpoint list_at l j :=
   end.
 Definition snoc {A} l (x:A) := app l (cons x nil).
 
-(* Takes two terms, produces a fresh name not free in those terms, passes that name to the given function, and returns the result. *)
-Variable fresh : Term -> Term -> (Var -> Term) -> Term.
-
 Inductive StdStep : Config -> Config -> Prop :=
   | SContext : forall t P I O t' I' O' P' E,
       StdStep (t, P, I, O) (t', P', I', O') ->
       StdStep (fill E t, P, I, O) (fill E t', P', I', O')
-  | SApp : forall x t1 t2 P I O,
-      StdStep (TApp (TLam x t1) t2, P, I, O) (subs t1 x t2, P, I, O)
+  | SApp : forall t1 t2 P I O,
+      StdStep (TApp (TLam t1) t2, P, I, O) (subs t1 t2, P, I, O)
   | SPlus : forall n1 n2 P I O,
       StdStep (TPlus (TNum n1) (TNum n2), P, I, O) (TNum (n1+n2), P, I, O)
   | SIf1 : forall t1 t2 P I O,
@@ -144,11 +140,11 @@ Inductive StdStep : Config -> Config -> Prop :=
   | SWrite : forall o n P I O,
       StdStep (TPut o (TNum n), P, I, O) (TReturn (TNum n), P, I, O_upd O o (snoc (O o) n))
   | SrunFacFIO1 : forall t P I O,
-      StdStep (TrunFacFIO (TFV (FVRaw t)), P, I, O) (TBindFIO t (fresh TUnit TUnit (fun x => TLam x (TReturn (TFV (FVRaw (TVar x)))))), P, I, O)
+      StdStep (TrunFacFIO (TFV (FVRaw t)), P, I, O) (TBindFIO t (TLam (TReturn (TFV (FVRaw (TVar 0))))), P, I, O)
   | SBindFac1 : forall t1 t2 P I O,
       StdStep (TrunFacFIO (TFV (FVBind (TFV (FVRaw t1)) t2)), P, I, O) (TrunFacFIO (TApp t2 t1), P, I, O)
   | SBindFac2 : forall t1 t2 t3 P I O,
-      StdStep (TrunFacFIO (TFV (FVBind (TFV (FVBind t1 t2)) t3)), P, I, O) (TrunFacFIO (TFV (FVBind t1 (fresh t2 t3 (fun x => TLam x (TFV (FVBind (TApp t2 (TVar x)) t3)))))), P, I, O)
+      StdStep (TrunFacFIO (TFV (FVBind (TFV (FVBind t1 t2)) t3)), P, I, O) (TrunFacFIO (TFV (FVBind t1 (TLam (TFV (FVBind (TApp t2 (TVar 0)) t3))))), P, I, O)
   .
 
 Definition pI l (I:Inputs) i :=
@@ -200,8 +196,8 @@ Inductive FacStep : PC -> Config -> Config -> Prop :=
   | FContext : forall pc t P I O t' I' O' P' E,
       FacStep pc (t, P, I, O) (t', P', I', O') ->
       FacStep pc (fill E t, P, I, O) (fill E t', P', I', O')
-  | FApp : forall pc x t1 t2 P I O,
-      FacStep pc (TApp (TLam x t1) t2, P, I, O) (subs t1 x t2, P, I, O)
+  | FApp : forall pc t1 t2 P I O,
+      FacStep pc (TApp (TLam t1) t2, P, I, O) (subs t1 t2, P, I, O)
   | FPlus : forall pc n1 n2 P I O,
       FacStep pc (TPlus (TNum n1) (TNum n2), P, I, O) (TNum (n1+n2), P, I, O)
   | FIf1 : forall pc t1 t2 P I O,
@@ -213,11 +209,11 @@ Inductive FacStep : PC -> Config -> Config -> Prop :=
       IsValue t1 ->
       FacStep pc (TBindFIO (TReturn t1) t2, P, I, O) (TApp t2 t1, P, I, O)
   | FrunFacFIO1 : forall t P I O pc,
-      FacStep pc (TrunFacFIO (TFV (FVRaw t)), P, I, O) (TBindFIO t (fresh TUnit TUnit (fun x => TLam x (TReturn (TFV (FVRaw (TVar x)))))), P, I, O)
+      FacStep pc (TrunFacFIO (TFV (FVRaw t)), P, I, O) (TBindFIO t (TLam (TReturn (TFV (FVRaw (TVar 0))))), P, I, O)
   | FBindFac1 : forall pc t1 t2 P I O,
       FacStep pc (TrunFacFIO (TFV (FVBind (TFV (FVRaw t1)) t2)), P, I, O) (TrunFacFIO (TApp t2 t1), P, I, O)
   | FBindFac2 : forall pc t1 t2 t3 P I O,
-      FacStep pc (TrunFacFIO (TFV (FVBind (TFV (FVBind t1 t2)) t3)), P, I, O) (TrunFacFIO (TFV (FVBind t1 (fresh t2 t3 (fun x => TLam x (TFV (FVBind (TApp t2 (TVar x)) t3)))))), P, I, O)
+      FacStep pc (TrunFacFIO (TFV (FVBind (TFV (FVBind t1 t2)) t3)), P, I, O) (TrunFacFIO (TFV (FVBind t1 (TLam (TFV (FVBind (TApp t2 (TVar 0)) t3))))), P, I, O)
 
   | FRead : forall pc i P I O,
       FacStep pc (TGet i, P, I, O) (TReturn (TFV (ffacet (l2pc (input_label i)) (fac_read1 pc i (P i) I) (FVRaw (TNum (-1))))), P_upd P i (fac_read2 pc i (P i) I), I, O)
@@ -265,7 +261,7 @@ Fixpoint pt l t :=
       else
         TReturn (TPlus (TNum 0) (pt l t))
   | TFV fv => TFV (pfv l fv)
-  | TLam x t => TLam x (pt l t)
+  | TLam t => TLam (pt l t)
   | TNum n => TNum n
   | TUnit => TUnit
   | TReturn t => TReturn (pt l t)
@@ -303,17 +299,20 @@ Lemma NotNum_lemma : forall l t,
  inversion 1; try congruence; try discriminate.
 Qed.
 
-Variable subs_lemma : forall l t1 t2 x,
-  pt l (subs t1 x t2) = subs (pt l t1) x (pt l t2).
+Variable subs_lemma : forall l t1 t2,
+  pt l (subs t1 t2) = subs (pt l t1) (pt l t2).
 
-(* This lemma is probably false, but who cares *)
-Variable fresh_lemma : forall l t1 t2,
-    pt l (fresh t1 t2 (fun x => TLam x (TFV (FVBind (TApp t1 (TVar x)) t2))))
-  = fresh (pt l t1) (pt l t2) (fun x => TLam x (TFV (FVBind (TApp (pt l t1) (TVar x)) (pt l t2)))).
+Lemma fresh_lemma : forall l t1 t2,
+    pt l (TLam (TFV (FVBind (TApp t1 (TVar 0)) t2)))
+  = TLam (TFV (FVBind (TApp (pt l t1) (TVar 0)) (pt l t2))).
+  reflexivity.
+Qed.
 
-Variable fresh_lemma_2 : forall l,
-    pt l (fresh TUnit TUnit (fun x => TLam x (TReturn (TFV (FVRaw (TVar x))))))
-  = fresh TUnit TUnit (fun x => TLam x (TReturn (TFV (FVRaw (TVar x))))).
+Lemma fresh_lemma_2 : forall l,
+    pt l (TLam (TReturn (TFV (FVRaw (TVar 0)))))
+  = TLam (TReturn (TFV (FVRaw (TVar 0)))).
+  reflexivity.
+Qed.
 
 Variable ffacet_Axiom1 : forall l1 l2 fv1 fv2,
   flows l2 l1 ->
@@ -413,33 +412,79 @@ Proof.
 Qed.
 
 Lemma unnamed_2 :
-  forall pc i p I l,
+  forall p pc i I l,
     not (Subsumes pc l) ->
     pp l (fac_read2 pc i p I) = pp l p.
+Proof.
+(*
+  induction p; intros.
+  -
+    simpl.
+    rewrite ffacet_BP_Axiom2; auto.
+  -
+    simpl.
+    remember (l p1) as b.
+    destruct b.
+      rewrite IHp1.
+        reflexivity.
+      intro.
+      apply H.
+Check unset_Axiom1.
+      
+      intro k.
+      unfold Subsumes in H0.
+      pose (H0 k) as T1.
+      rewrite unset_Axiom1 in T1.
+      destruct (pc k).
+    unfold Subsumes in H.
+Qed.
+*)
 Admitted.
 
-Lemma unnamed_3 : forall l P i p,
+Variable unnamed_3 : forall l P i p,
   P_upd (pP l P) i (BPNum (pp l p)) = pP l (P_upd P i p).
-Admitted.
 
 Lemma unnamed_4 : forall i l pc p I,
   flows (input_label i) l ->
   pfv l (fac_read1 pc i p I) = FVRaw (TNum (list_at (pI l I i) (pp l p))).
-Admitted.
+  intros.
+  induction p.
+  -
+    simpl.
+    unfold pI.
+    destruct (dec_flows (input_label i) l).
+      reflexivity.
+    contradiction.
+  -
+    simpl.
+    rename p1 into k.
+    assert (forall p pc k, fac_read1 (unset pc k) i p I = fac_read1 pc i p I).
+      induction p.
+        reflexivity.
+      intros.
+      simpl.
+      congruence.
+    destruct (l k).
+    +
+      rewrite H0.
+      rewrite IHp1.
+      reflexivity.
+    +
+      rewrite H0.
+      rewrite IHp2.
+      reflexivity.
+Qed.
 
-Lemma unnamed_5 : forall O o n,
+Variable unnamed_5 : forall O o n,
     O_upd (pO (output_label o) O) o (snoc (pO (output_label o) O o) n)
   = pO (output_label o) (O_upd O o (snoc (O o) n)).
-Admitted.
 
-Lemma unnamed_6 : forall O o l ns,
+Variable unnamed_6 : forall O o l ns,
   output_label o <> l ->
   pO l (O_upd O o ns) = pO l O.
-Admitted.
 
-Lemma unnamed_7 : forall l P i,
+Variable unnamed_7 : forall l P i,
   P_upd (pP l P) i (BPNum (pp l (P i))) = pP l P.
-Admitted.
 
 Theorem projection_1 : forall (C C':Config) l pc,
   FacStep pc C C' ->
@@ -461,9 +506,9 @@ Theorem projection_1 : forall (C C':Config) l pc,
   .
  induction 1; split; intro; unfold pC; simpl;
    try solve [pose (hints := hints); intuition].
- (* Leaves 18 subgoals *)
+ (* Leaves 17 subgoals *)
 
-  (* FContext, part 1 *)
+- (* FContext, part 1 *)
   destruct IHFacStep as (H1, H2).
   destruct H1; try auto.
    left.
@@ -492,19 +537,11 @@ Theorem projection_1 : forall (C C':Config) l pc,
   apply SContext with (E := EPlus2 0).
   assumption.
 
-  (* FApp, part 1 *)
+- (* FApp, part 1 *)
   rewrite subs_lemma.
   pose (hints := hints); intuition.
 
-  (* FrunFacFIO1, part 1 *)
-  rewrite fresh_lemma_2.
-  pose (hints := hints); intuition.
-
-  (* FBindFac2, part 1*)
-  rewrite fresh_lemma.
-  pose (hints := hints); intuition.
-
-  (* FRead, part 1 *)
+- (* FRead, part 1 *)
   right.
   destruct (dec_flows (input_label i) l) as [H1|H1].
    rewrite ffacet_Axiom1; try assumption.
@@ -525,13 +562,13 @@ Theorem projection_1 : forall (C C':Config) l pc,
   eapply SRead.
   reflexivity.
 
-  (* FRead, part 2 *)
+- (* FRead, part 2 *)
   rewrite <- unnamed_3.
   rewrite unnamed_2; try assumption.
   rewrite unnamed_7.
   intuition.
 
-  (* FWrite, part 1 *)
+- (* FWrite, part 1 *)
   destruct (dec_eq_Label (output_label o) l) as [e|].
    right.
    rewrite <- e.
@@ -542,40 +579,40 @@ Theorem projection_1 : forall (C C':Config) l pc,
   rewrite unnamed_6; try auto.
   eapply SPlus.
 
-  (* FWrite, part 2 *)
+- (* FWrite, part 2 *)
   rewrite unnamed_6; intuition congruence.
 
-  (* FWriteSkip, part 1 *)
+- (* FWriteSkip, part 1 *)
   destruct (dec_eq_Label (output_label o) l).
    congruence.
   right.
   apply SContext with (E := EReturn).
   apply SPlus.
 
-  (* FBindFac3, part 1 *)
+- (* FBindFac3, part 1 *)
   destruct (l k); intuition.
 
-  (* FrunFacFIO2, part 1 *)
+- (* FrunFacFIO2, part 1 *)
   remember (l k) as b.
   destruct b; try auto.
   pose (H0 k) as temp.
   rewrite H in temp.
   congruence.
 
-  (* FrunFacFIO3, part 1 *)
+- (* FrunFacFIO3, part 1 *)
   remember (l k) as b.
   destruct b; try auto.
   pose (H0 k) as temp.
   rewrite H in temp.
   congruence.
 
-  (* FrunFacFIO4, part 1 *)
+- (* FrunFacFIO4, part 1 *)
   left.
   destruct (l k).
    intuition.
   intuition.
 
-  (* FTimeout, part 1 *)
+- (* FTimeout, part 1 *)
   left.
   destruct E; try (
     rewrite fill_lemma; try trivial;
@@ -587,10 +624,10 @@ Theorem projection_1 : forall (C C':Config) l pc,
   simpl.
   destruct (l k); auto.
 
-  (* FMerge, part 1 *)
+- (* FMerge, part 1 *)
   destruct (l k); auto.
 
-  (* FThread1, part 1 *)
+- (* FThread1, part 1 *)
   remember (l k) as b.
   destruct IHFacStep.
   destruct b.
@@ -612,7 +649,7 @@ Theorem projection_1 : forall (C C':Config) l pc,
    rewrite add_Axiom1 in H4; congruence.
   intuition congruence.
 
-  (* FThread1, part 2 *)
+- (* FThread1, part 2 *)
   assert (~Subsumes (add pc k) l).
    clear IHFacStep H0 O' I' P' t1' O I P t1 t2.
    intuition.
@@ -630,7 +667,7 @@ Theorem projection_1 : forall (C C':Config) l pc,
    rewrite add_Axiom2 in y; auto.
   intuition.
 
-  (* FThread2, part 1 *)
+- (* FThread2, part 1 *)
   (* Just a copy-paste-edit from FThread1 part 1 *)
   remember (l k) as b.
   destruct IHFacStep.
@@ -654,7 +691,7 @@ Theorem projection_1 : forall (C C':Config) l pc,
    rewrite subtract_Axiom1 in H4; congruence.
   intuition congruence.
 
-  (* FThread2, part 2 *)
+- (* FThread2, part 2 *)
   (* Just a copy-paste-edit from FThread1 part 2 *)
   assert (~Subsumes (subtract pc k) l).
    clear IHFacStep H0 O' I' P' t2' O I P t1 t2.
@@ -759,7 +796,7 @@ Qed.
 Lemma custom_induction :
        forall P : Term -> Prop,
        (forall f : FacetedValue, P (TFV f)) ->
-       (forall (v : Var) (t : Term), P t -> P (TLam v t)) ->
+       (forall (t : Term), P t -> P (TLam t)) ->
        (forall z : Z, P (TNum z)) ->
        P TUnit ->
        (forall t : Term, P t -> P (TReturn t)) ->
@@ -820,7 +857,7 @@ Lemma projection_1' : forall l C pc,
 
   (* Leaves 11 subgoals *)
 
-         inversion stdstep.
+-        inversion stdstep.
          destruct E; try discriminate.
          apply IHt with pc (t', P', I', O').
            exact subsumes.
@@ -834,7 +871,7 @@ Lemma projection_1' : forall l C pc,
          injection H; intros.
          rewrite <- H5.
          exact H4.
-        inversion stdstep.
+-       inversion stdstep.
          destruct E; try discriminate.
          apply IHt1 with pc (t', P', I', O').
            exact subsumes.
@@ -849,13 +886,13 @@ Lemma projection_1' : forall l C pc,
          rewrite <- H6.
          apply H4.
         destruct t1; try discriminate.
-          apply notfacstep with (subs t1 v t2, P, I, O).
+          apply notfacstep with (subs t1 t2, P, I, O).
           apply FApp.
          simpl in H0.
          destruct (dec_eq_Label (output_label o) l);  inversion H0.
         apply notfacstep with (TThreads p (TApp t1_1 t2) (TApp t1_2 t2), P, I, O).
         apply FTimeout with (E := EApp t2).
-       inversion stdstep.
+-      inversion stdstep.
         destruct E; try discriminate.
          apply IHt1 with pc (t', P', I', O').
            exact subsumes.
@@ -902,7 +939,7 @@ Lemma projection_1' : forall l C pc,
         destruct (dec_eq_Label (output_label o) l);  inversion H0.
        apply notfacstep with (TThreads p (TPlus t1_1 t2) (TPlus t1_2 t2), P, I, O).
        apply FTimeout with (E := EPlus1 t2).
-      inversion stdstep.
+-     inversion stdstep.
         destruct E; try discriminate.
         apply IHt1 with pc (t', P', I', O').
           exact subsumes.
@@ -935,7 +972,7 @@ Lemma projection_1' : forall l C pc,
        destruct (dec_eq_Label (output_label o) l);  inversion H.
       apply notfacstep with (TThreads p (TIf t1_1 t2 t3) (TIf t1_2 t2 t3), P, I, O).
       apply FTimeout with (E := EIf t2 t3).
-     inversion stdstep.
+-    inversion stdstep.
       destruct E; try discriminate.
       apply IHt1 with pc (t', P', I', O').
         exact subsumes.
@@ -983,7 +1020,7 @@ Lemma projection_1' : forall l C pc,
       exact T1.
      eapply notfacstep.
      apply FTimeout with (E := E).
-    inversion stdstep.
+-   inversion stdstep.
          destruct E; try discriminate.
           apply IHt1 with pc (t', P', I', O').
             exact subsumes.
@@ -1029,7 +1066,7 @@ Lemma projection_1' : forall l C pc,
         destruct (dec_eq_Label (output_label o) l); discriminate.
        apply notfacstep with (TThreads p (TrunFacFIO (TFV (FVBind t1_1 t2))) (TrunFacFIO (TFV (FVBind t1_2 t2))), P, I, O).
        apply FTimeout with (E := ErunFacFIO2 t2).
-     inversion stdstep.
+-    inversion stdstep.
         destruct E; try discriminate.
          apply IHt with pc (t', P', I', O').
            exact subsumes.
@@ -1101,7 +1138,7 @@ Lemma projection_1' : forall l C pc,
       eapply notfacstep.
       apply FrunFacFIO4.
       congruence.
-    inversion stdstep.
+-   inversion stdstep.
        destruct E; try discriminate.
         apply IHt with pc (t', P', I', O').
           exact subsumes.
@@ -1139,11 +1176,11 @@ Lemma projection_1' : forall l C pc,
      destruct (dec_eq_Label (output_label o) l); discriminate.
     eapply notfacstep.
     apply FTimeout with (E := ErunFacFIO1).
-   inversion stdstep.
+-  inversion stdstep.
     destruct E; discriminate.
    eapply notfacstep.
    apply FRead.
-  simpl in stdstep.
+- simpl in stdstep.
   destruct (dec_eq_Label (output_label o) l).
    inversion stdstep.
      destruct E; try discriminate.
@@ -1221,7 +1258,7 @@ Lemma projection_1' : forall l C pc,
   eapply notfacstep.
   eapply FContext with (E := EPut o).
   exact T1.
- remember (l p) as T.
+-remember (l p) as T.
  destruct T.
   eapply IHt1.
     Focus 2.
@@ -1413,7 +1450,7 @@ Lemma better_induction_principle :
        forall P : Term -> Prop,
        forall Q : FacetedValue -> Prop,
        (forall f : FacetedValue, Q f -> P (TFV f)) ->
-       (forall (v : Var) (t : Term), P t -> P (TLam v t)) ->
+       (forall (t : Term), P t -> P (TLam t)) ->
        (forall z : Z, P (TNum z)) ->
        P TUnit ->
        (forall t : Term, P t -> P (TReturn t)) ->
@@ -1595,8 +1632,8 @@ Inductive LStep (l:Label) : PC -> Config -> Config -> Prop :=
   | LContext : forall pc t P I O t' I' O' P' E,
       LStep l pc (t, P, I, O) (t', P', I', O') ->
       LStep l pc (fill E t, P, I, O) (fill E t', P', I', O')
-  | LApp : forall pc x t1 t2 P I O,
-      LStep l pc (TApp (TLam x t1) t2, P, I, O) (subs t1 x t2, P, I, O)
+  | LApp : forall pc t1 t2 P I O,
+      LStep l pc (TApp (TLam t1) t2, P, I, O) (subs t1 t2, P, I, O)
   | LPlus : forall pc n1 n2 P I O,
       LStep l pc (TPlus (TNum n1) (TNum n2), P, I, O) (TNum (n1+n2), P, I, O)
   | LIf1 : forall pc t1 t2 P I O,
@@ -1608,11 +1645,11 @@ Inductive LStep (l:Label) : PC -> Config -> Config -> Prop :=
       IsValue t1 ->
       LStep l pc (TBindFIO (TReturn t1) t2, P, I, O) (TApp t2 t1, P, I, O)
   | LrunFacFIO1 : forall t P I O pc,
-      LStep l pc (TrunFacFIO (TFV (FVRaw t)), P, I, O) (TBindFIO t (fresh TUnit TUnit (fun x => TLam x (TReturn (TFV (FVRaw (TVar x)))))), P, I, O)
+      LStep l pc (TrunFacFIO (TFV (FVRaw t)), P, I, O) (TBindFIO t (TLam (TReturn (TFV (FVRaw (TVar 0))))), P, I, O)
   | LBindFac1 : forall pc t1 t2 P I O,
       LStep l pc (TrunFacFIO (TFV (FVBind (TFV (FVRaw t1)) t2)), P, I, O) (TrunFacFIO (TApp t2 t1), P, I, O)
   | LBindFac2 : forall pc t1 t2 t3 P I O,
-      LStep l pc (TrunFacFIO (TFV (FVBind (TFV (FVBind t1 t2)) t3)), P, I, O) (TrunFacFIO (TFV (FVBind t1 (fresh t2 t3 (fun x => TLam x (TFV (FVBind (TApp t2 (TVar x)) t3)))))), P, I, O)
+      LStep l pc (TrunFacFIO (TFV (FVBind (TFV (FVBind t1 t2)) t3)), P, I, O) (TrunFacFIO (TFV (FVBind t1 (TLam (TFV (FVBind (TApp t2 (TVar 0)) t3))))), P, I, O)
 
   | LRead : forall pc i P I O,
       LStep l pc (TGet i, P, I, O) (TReturn (TFV (ffacet (l2pc (input_label i)) (fac_read1 pc i (P i) I) (FVRaw (TNum (-1))))), P_upd P i (fac_read2 pc i (P i) I), I, O)
@@ -1652,7 +1689,7 @@ Inductive LStep (l:Label) : PC -> Config -> Config -> Prop :=
 Fixpoint value_t (l:Label) (t:Term) :=
   match t with
   | TFV fv => value_fv l fv
-  | TLam x t => value_t l t + value_t l t
+  | TLam t => value_t l t + value_t l t
   | TNum n => 0
   | TUnit => 0
   | TReturn (TFV _) => 0
@@ -1725,8 +1762,9 @@ Lemma mechanism_progress : forall l pc C C',
  rename H0 into T2.
  induction T2
    ; try solve [left; simpl; pose hints; intuition].
- (* Leaves 14 subgoals *)
+ (* Leaves 13 subgoals *)
 
+-
  destruct IHT2.
    assumption.
   left.
@@ -1775,21 +1813,13 @@ Lemma mechanism_progress : forall l pc C C',
   destruct E; discriminate.
  destruct E; discriminate.
 
+-
  left.
  simpl.
  rewrite subs_lemma.
  apply SApp.
 
- left.
- simpl.
- rewrite fresh_lemma_2.
- apply SrunFacFIO1.
-
- left.
- simpl.
- rewrite fresh_lemma.
- apply SBindFac2.
-
+-
  left.
  simpl.
  destruct (dec_flows (input_label i) l).
@@ -1811,6 +1841,7 @@ Lemma mechanism_progress : forall l pc C C',
  eapply SRead.
  reflexivity.
 
+-
  simpl.
  destruct (dec_eq_Label (output_label o) l) as [e|].
   left.
@@ -1822,6 +1853,7 @@ Lemma mechanism_progress : forall l pc C C',
  apply SContext with (E := EReturn).
  apply SPlus.
 
+-
  simpl.
  destruct (dec_eq_Label (output_label o) l) as [e|].
   congruence.  (* contradiction between T1 and e *)
@@ -1829,6 +1861,7 @@ Lemma mechanism_progress : forall l pc C C',
  apply SContext with (E := EReturn).
  apply SPlus.
 
+-
  right.
  simpl.
  destruct (l k); (
@@ -1837,6 +1870,7 @@ Lemma mechanism_progress : forall l pc C C',
    ; omega
  ).
 
+-
  right.
  simpl.
  remember (l k) as temp.
@@ -1848,6 +1882,7 @@ Lemma mechanism_progress : forall l pc C C',
  rewrite H in T2.
  congruence.
 
+-
  right.
  simpl.
  remember (l k) as temp.
@@ -1859,6 +1894,7 @@ Lemma mechanism_progress : forall l pc C C',
   reflexivity.
  omega.
 
+-
  right.
  simpl.
  destruct (l k); (
@@ -1867,6 +1903,7 @@ Lemma mechanism_progress : forall l pc C C',
    ; omega
  ).
 
+-
  right.
  simpl.
  rewrite fill_value_lemma.
@@ -1883,11 +1920,13 @@ Lemma mechanism_progress : forall l pc C C',
  simpl.
  destruct t2; try solve [simpl; omega].
 
+-
  right.
  simpl.
  destruct (l k)
    ; split; try reflexivity; omega.
 
+-
  destruct IHT2.
    intro.
    destruct (dec_eq_Principal k k0).
@@ -1908,6 +1947,7 @@ Lemma mechanism_progress : forall l pc C C',
   congruence.
  omega.
 
+-
  destruct IHT2.
    intro.
    destruct (dec_eq_Principal k k0).
